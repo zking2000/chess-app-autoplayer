@@ -149,6 +149,33 @@ def read_turn(app_name: str = "Chess") -> chess.Color | None:
     return None
 
 
+def _infer_turn_from_check(board: chess.Board) -> chess.Color | None:
+    """Infer side to move from check status (more reliable than window title).
+
+    If exactly one king is in check, that side must move next.  If neither is
+    in check, returns None (caller should use the window title).  If both are
+    in check, the position is illegal.
+    """
+    wk = board.king(chess.WHITE)
+    bk = board.king(chess.BLACK)
+    if wk is None or bk is None:
+        return None
+
+    white_checked = board.is_attacked_by(chess.BLACK, wk)
+    black_checked = board.is_attacked_by(chess.WHITE, bk)
+
+    if white_checked and black_checked:
+        raise RuntimeError(
+            "Both kings are in check — position is illegal. "
+            "Wait for Chess.app animations to finish and try again."
+        )
+    if white_checked:
+        return chess.WHITE
+    if black_checked:
+        return chess.BLACK
+    return None
+
+
 def _infer_castling(
     piece_map: dict[chess.Square, chess.Piece],
 ) -> str:
@@ -202,31 +229,38 @@ def board_from_live_state(app_name: str = "Chess") -> chess.Board:
             f"{len(black_kings)} black king(s)."
         )
 
-    turn = read_turn(app_name)
-    if turn is None:
-        # Fallback: count material difference to guess whose turn it is.
-        # White moves first, so after an even number of half-moves it's white's turn.
-        # Approximate: if piece counts are equal we guess white (start of game bias).
-        turn = chess.WHITE
-        print("Warning: could not determine turn from window title, assuming White.")
-
     castling = _infer_castling(piece_map)
 
     # Build FEN: <pieces> <turn> <castling> <en_passant> <halfmove> <fullmove>
     board = chess.Board(None)  # start with empty board
     for square, piece in piece_map.items():
         board.set_piece_at(square, piece)
-    board.turn = turn
     board.set_castling_fen(castling)
     board.ep_square = None      # cannot recover en passant from snapshot
     board.halfmove_clock = 0    # conservative (resets draw-by-50 counter)
     board.fullmove_number = 1   # approximate; affects nothing functionally
 
+    # Turn order: prefer check-based inference (Chess.app title can lag after promotions).
+    turn_from_check = _infer_turn_from_check(board)
+    if turn_from_check is not None:
+        board.turn = turn_from_check
+    else:
+        title_turn = read_turn(app_name)
+        if title_turn is not None:
+            board.turn = title_turn
+        else:
+            board.turn = chess.WHITE
+            print("Warning: could not infer turn (no check, unreadable title); assuming White.")
+
     if not board.is_valid():
-        raise RuntimeError(
-            f"Reconstructed board is not valid (FEN: {board.fen()}). "
-            "The position may be in a transitional animation state — try again."
-        )
+        # Title may disagree with reality — try the other side once.
+        board.turn = not board.turn
+        if not board.is_valid():
+            board.turn = not board.turn  # restore for error message
+            raise RuntimeError(
+                f"Reconstructed board is not valid (FEN: {board.fen()}). "
+                "Wait for Chess.app piece animations to finish, then run again with --resume."
+            )
 
     return board
 
