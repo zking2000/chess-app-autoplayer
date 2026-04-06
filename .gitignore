@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Runtime state — machine-specific and personal data
+state/calibration.json
+state/stats.json
+state/games/
+state/*.png
+
+# Generated template assets (created by calibrate --bootstrap-templates)
+assets/templates/*.png
+assets/templates/manifest.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/

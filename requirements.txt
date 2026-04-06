@@ -1,0 +1,4 @@
+python-chess
+Pillow
+PyAutoGUI
+numpy

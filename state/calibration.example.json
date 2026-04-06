@@ -1,0 +1,13 @@
+{
+  "board_left": 0,
+  "board_top": 0,
+  "board_size": 800,
+  "board_bottom": "white",
+  "bot_color": "white",
+  "app_name": "Chess",
+  "corner_a1": null,
+  "corner_h1": null,
+  "corner_a8": null,
+  "corner_h8": null,
+  "homography": null
+}
