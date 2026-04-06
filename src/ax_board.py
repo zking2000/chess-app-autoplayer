@@ -52,8 +52,15 @@ tell application "{app}" to activate
 delay 0.3
 tell application "System Events"
     tell process "{app}"
-        set wins to windows
-        if (count of wins) is 0 then return ""
+        set frontmost to true
+        set retries to 0
+        repeat
+            set wins to windows
+            if (count of wins) > 0 then exit repeat
+            delay 0.3
+            set retries to retries + 1
+            if retries > 10 then return ""
+        end repeat
         set grp to first group of (item 1 of wins)
         set outStr to ""
         repeat with btn in (every button of grp)

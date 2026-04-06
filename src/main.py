@@ -222,6 +222,8 @@ def command_play(args: argparse.Namespace) -> int:
                 print(f"Opponent move: {opponent_move.uci()}")
                 board.push(opponent_move)
                 pgn_node = pgn_node.add_variation(opponent_move)
+                # Allow Chess.app animation to finish before we click again
+                time.sleep(1.2)
             half_moves += 1
     finally:
         engine.close()
