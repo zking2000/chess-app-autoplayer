@@ -21,10 +21,14 @@ from .config import Calibration
 
 
 _AX_CLICK_SCRIPT = """\
+tell application "{app}" to activate
+delay 0.4
 tell application "System Events"
     tell process "{app}"
         set frontmost to true
-        set grp to group 1 of window 1
+        set wins to windows
+        if (count of wins) is 0 then return "no_window:{sq}"
+        set grp to first group of (item 1 of wins)
         repeat with btn in (every button of grp)
             set desc to description of btn
             if desc is "{sq}" or desc ends with ", {sq}" then

@@ -48,9 +48,13 @@ _PIECE_MAP: dict[str, chess.Piece] = {
 }
 
 _READ_SCRIPT = """\
+tell application "{app}" to activate
+delay 0.3
 tell application "System Events"
     tell process "{app}"
-        set grp to group 1 of window 1
+        set wins to windows
+        if (count of wins) is 0 then return ""
+        set grp to first group of (item 1 of wins)
         set outStr to ""
         repeat with btn in (every button of grp)
             set outStr to outStr & (description of btn) & linefeed
