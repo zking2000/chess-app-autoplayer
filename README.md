@@ -14,7 +14,7 @@ Chess.app exposes all 64 board squares as clickable buttons via the macOS Access
 4. Detects the opponent's response by comparing the live AX state against the expected board state (no race conditions)
 5. Saves a PGN game record and updates win/loss statistics
 
-**Requirement**: The game must start from the initial position so the internal board state can be tracked correctly (castling rights, en passant, turn order, etc.).
+**Fresh game**: For a new game from the start position, run `play` without `--resume` so the internal state matches the board. **Mid-game**: use `play --resume` to read the live position from Chess.app and continue.
 
 ## Features
 
@@ -66,18 +66,45 @@ Grant the following permissions before first use:
 
 Restart your terminal after changing permissions.
 
+## How to run (entry points)
+
+**Recommended — wrapper script** (uses `.venv/bin/python` from the repo root; handy for automation allowlists):
+
+```bash
+chmod +x bin/openclaw-cheese   # once per clone
+./bin/openclaw-cheese self-check
+./bin/openclaw-cheese play --no-launch --think-time 2.0 --poll-interval 0.5 --move-confirmation-timeout 15
+# Resume a game already on the board:
+./bin/openclaw-cheese play --no-launch --resume --think-time 2.0
+```
+
+**Alternative — activate the venv**, then use `python -m`:
+
+```bash
+source .venv/bin/activate
+python -m src.main self-check
+python -m src.main play --no-launch
+```
+
+**One-liner without activating** (same as the wrapper):
+
+```bash
+.venv/bin/python -m src.main play --no-launch
+```
+
 ## Quick Start
 
 ### 1. Self-check
 
 ```bash
-python -m src.main self-check
+./bin/openclaw-cheese self-check
+# or: .venv/bin/python -m src.main self-check
 ```
 
 ### 2. Calibrate (first time only)
 
 ```bash
-python -m src.main calibrate --bot-color white --board-bottom white
+./bin/openclaw-cheese calibrate --bot-color white --board-bottom white
 ```
 
 Calibration records the board region for template generation (`dry-run`). The `play` command uses the Accessibility API and does not require precise coordinates.
@@ -85,7 +112,7 @@ Calibration records the board region for template generation (`dry-run`). The `p
 ### 3. Dry run (think without playing)
 
 ```bash
-python -m src.main dry-run --no-launch
+./bin/openclaw-cheese dry-run --no-launch
 ```
 
 ### 4. Play a full game
@@ -93,7 +120,7 @@ python -m src.main dry-run --no-launch
 Open a new game in `Chess.app` (`Cmd+N`), then:
 
 ```bash
-python -m src.main play --no-launch
+./bin/openclaw-cheese play --no-launch
 ```
 
 The bot will:
@@ -124,11 +151,14 @@ Results are saved to `state/games/` and `state/stats.json`.
 | `--max-half-moves` | unlimited | Stop after N half-moves (testing) |
 | `--no-launch` | false | Do not relaunch Chess.app |
 | `--no-save` | false | Skip saving PGN and stats |
+| `--resume` | false | Continue from the current Chess.app position (mid-game) |
 
 ## Project Structure
 
 ```
 chess-app-autoplayer/
+├── bin/
+│   └── openclaw-cheese         # zsh wrapper → .venv/bin/python -m src.main
 ├── src/
 │   ├── main.py                 # Entry point and game loop
 │   ├── ax_board.py             # Accessibility API board reader

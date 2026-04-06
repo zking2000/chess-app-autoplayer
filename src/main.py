@@ -18,7 +18,7 @@ from .ax_board import (  # noqa: F401
 from .calibrate import calibrate_and_optionally_bootstrap
 from .config import ROOT_DIR, RuntimeConfig, ensure_directories, load_calibration
 from .engine import EngineWrapper
-from .launcher import launch_and_focus_app, run_self_check
+from .launcher import ensure_single_app_window, launch_and_focus_app, run_self_check
 
 GAMES_DIR = ROOT_DIR / "state" / "games"
 STATS_PATH = ROOT_DIR / "state" / "stats.json"
@@ -72,9 +72,9 @@ def _build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     )
 
 
-_OPPONENT_TIMEOUT = 300.0   # 5 minutes max wait for opponent move
-_CONFIRMATION_RETRIES = 2   # re-execute move if confirmation times out
-_GAME_LOOP_RETRIES = 3      # per-half-move retry budget
+_OPPONENT_TIMEOUT = 300.0  # 5 minutes max wait for opponent move
+_CONFIRMATION_RETRIES = 2  # re-execute move if confirmation times out
+_GAME_LOOP_RETRIES = 3  # per-half-move retry budget
 
 
 def _wait_for_our_move_confirmation(
@@ -157,6 +157,7 @@ def command_self_check(args: argparse.Namespace) -> int:
 def command_calibrate(args: argparse.Namespace) -> int:
     if not args.no_launch:
         launch_and_focus_app("Chess")
+    ensure_single_app_window("Chess")
 
     if args.corners:
         calibration = calibrate_and_optionally_bootstrap(
@@ -171,7 +172,9 @@ def command_calibrate(args: argparse.Namespace) -> int:
         if any(value is not None for value in explicit_coords) and any(
             value is None for value in explicit_coords
         ):
-            raise ValueError("--board-left, --board-top, and --board-size must all be provided together.")
+            raise ValueError(
+                "--board-left, --board-top, and --board-size must all be provided together."
+            )
 
         calibration = calibrate_and_optionally_bootstrap(
             bot_color=args.bot_color,
@@ -196,6 +199,7 @@ def command_dry_run(args: argparse.Namespace) -> int:
     calibration = load_calibration()
     if runtime.launch_app:
         launch_and_focus_app(calibration.app_name)
+    ensure_single_app_window(calibration.app_name)
 
     board = chess.Board()
     bot_turn = chess.WHITE if calibration.bot_color == "white" else chess.BLACK
@@ -219,6 +223,7 @@ def command_play(args: argparse.Namespace) -> int:
     calibration = load_calibration()
     if runtime.launch_app:
         launch_and_focus_app(calibration.app_name)
+    ensure_single_app_window(calibration.app_name)
 
     app_name = calibration.app_name
     bot_color = calibration.bot_color
@@ -259,15 +264,19 @@ def command_play(args: argparse.Namespace) -> int:
             for attempt in range(_GAME_LOOP_RETRIES):
                 if attempt > 0:
                     wait = 2.0 * attempt
-                    print(f"  [step retry {attempt}/{_GAME_LOOP_RETRIES - 1}] "
-                          f"waiting {wait:.0f}s — last error: {last_step_error}")
+                    print(
+                        f"  [step retry {attempt}/{_GAME_LOOP_RETRIES - 1}] "
+                        f"waiting {wait:.0f}s — last error: {last_step_error}"
+                    )
                     time.sleep(wait)
 
                 try:
                     if board.turn == bot_turn:
                         move = engine.choose_move(board)
-                        print(f"Bot move: {move.uci()}" +
-                              (f" (retry {attempt})" if attempt else ""))
+                        print(
+                            f"Bot move: {move.uci()}"
+                            + (f" (retry {attempt})" if attempt else "")
+                        )
                         play_move(calibration, move)
                         board.push(move)
                         pgn_node = pgn_node.add_variation(move)
@@ -275,7 +284,9 @@ def command_play(args: argparse.Namespace) -> int:
                         print("  Move confirmed.")
                     else:
                         print("Waiting for opponent move...")
-                        opponent_move = _wait_for_opponent_move(board, app_name, runtime)
+                        opponent_move = _wait_for_opponent_move(
+                            board, app_name, runtime
+                        )
                         print(f"Opponent move: {opponent_move.uci()}")
                         board.push(opponent_move)
                         pgn_node = pgn_node.add_variation(opponent_move)
@@ -324,14 +335,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Chess.app offline autoplayer")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    self_check = subparsers.add_parser("self-check", help="Check permissions and basic capabilities")
+    self_check = subparsers.add_parser(
+        "self-check", help="Check permissions and basic capabilities"
+    )
     self_check.set_defaults(func=command_self_check)
 
-    calibrate = subparsers.add_parser("calibrate", help="Calibrate board region and generate templates")
+    calibrate = subparsers.add_parser(
+        "calibrate", help="Calibrate board region and generate templates"
+    )
     calibrate.add_argument("--bot-color", choices=["white", "black"], required=True)
     calibrate.add_argument("--board-bottom", choices=["white", "black"], required=True)
     calibrate.add_argument("--bootstrap-templates", action="store_true")
-    calibrate.add_argument("--corners", action="store_true", help="4-corner perspective calibration (recommended for 3D boards)")
+    calibrate.add_argument(
+        "--corners",
+        action="store_true",
+        help="4-corner perspective calibration (recommended for 3D boards)",
+    )
     calibrate.add_argument("--board-left", type=int)
     calibrate.add_argument("--board-top", type=int)
     calibrate.add_argument("--board-size", type=int)
@@ -354,9 +373,10 @@ def build_parser() -> argparse.ArgumentParser:
                 "--no-save", action="store_true", help="Skip saving PGN and stats"
             )
             subparser.add_argument(
-                "--resume", action="store_true",
+                "--resume",
+                action="store_true",
                 help="Resume a game already in progress: read current position from Chess.app "
-                     "instead of starting from the initial position",
+                "instead of starting from the initial position",
             )
         subparser.set_defaults(func=handler)
 

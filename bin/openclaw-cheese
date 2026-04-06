@@ -1,0 +1,21 @@
+#!/bin/zsh
+# Wrapper for allowlisted automation: runs src.main with the project venv.
+# Usage: ./bin/openclaw-cheese play --no-launch
+#        ./bin/openclaw-cheese self-check
+
+set -euo pipefail
+
+ROOT="$(cd "${0:A:h}/.." && pwd)"
+PYTHON="$ROOT/.venv/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+  print -u2 "Virtualenv not found. Create it first: cd \"$ROOT\" && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+  exit 1
+fi
+
+if [[ -z "${STOCKFISH_PATH:-}" ]] && command -v stockfish >/dev/null 2>&1; then
+  export STOCKFISH_PATH="$(command -v stockfish)"
+fi
+
+cd "$ROOT"
+exec "$PYTHON" -m src.main "$@"
