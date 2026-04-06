@@ -68,6 +68,11 @@ def _build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     )
 
 
+_OPPONENT_TIMEOUT = 300.0   # 5 minutes max wait for opponent move
+_CONFIRMATION_RETRIES = 2   # re-execute move if confirmation times out
+_GAME_LOOP_RETRIES = 3      # per-half-move retry budget
+
+
 def _wait_for_our_move_confirmation(
     move: chess.Move,
     app_name: str,
@@ -76,13 +81,17 @@ def _wait_for_our_move_confirmation(
     """Poll until the source square is cleared, confirming our piece moved."""
     deadline = time.time() + runtime.move_confirmation_timeout
     while time.time() < deadline:
-        state = read_piece_map(app_name)
+        try:
+            state = read_piece_map(app_name)
+        except Exception:
+            time.sleep(runtime.poll_interval)
+            continue
         if state.get(move.from_square) is None:
             return
         time.sleep(runtime.poll_interval)
     raise RuntimeError(
-        f"Move confirmation timeout: piece did not leave {chess.square_name(move.from_square)} "
-        f"(expected move {move.uci()})."
+        f"Move confirmation timeout: piece did not leave "
+        f"{chess.square_name(move.from_square)} (expected {move.uci()})."
     )
 
 
@@ -96,12 +105,27 @@ def _wait_for_opponent_move(
     Compares the live AX board state against the expected state from our
     internal ``board`` object (which already has the bot's last move applied).
     No race condition: we detect the DIFFERENCE between expected and actual.
+    Times out after _OPPONENT_TIMEOUT seconds to avoid hanging forever.
     """
     from .position_recognizer import move_changed_squares as _mcs
 
     expected = board.piece_map()
-    while True:
-        current = read_piece_map(app_name)
+    deadline = time.time() + _OPPONENT_TIMEOUT
+    consecutive_errors = 0
+
+    while time.time() < deadline:
+        try:
+            current = read_piece_map(app_name)
+            consecutive_errors = 0
+        except Exception as exc:
+            consecutive_errors += 1
+            if consecutive_errors >= 5:
+                raise RuntimeError(
+                    f"AX board read failed {consecutive_errors} times in a row: {exc}"
+                ) from exc
+            time.sleep(runtime.poll_interval)
+            continue
+
         changed = {
             sq
             for sq in set(expected) | set(current)
@@ -112,6 +136,11 @@ def _wait_for_opponent_move(
                 if _mcs(board, move) == changed:
                     return move
         time.sleep(runtime.poll_interval)
+
+    raise RuntimeError(
+        f"Opponent did not move within {_OPPONENT_TIMEOUT:.0f}s — "
+        "game may have ended or Chess.app is unresponsive."
+    )
 
 
 def command_self_check(args: argparse.Namespace) -> int:
@@ -208,22 +237,52 @@ def command_play(args: argparse.Namespace) -> int:
                 print("Max half-move limit reached, stopping early.")
                 break
 
-            if board.turn == bot_turn:
-                move = engine.choose_move(board)
-                print(f"Bot move: {move.uci()}")
-                play_move(calibration, move)
-                board.push(move)
-                pgn_node = pgn_node.add_variation(move)
-                _wait_for_our_move_confirmation(move, app_name, runtime)
-                print("  Move confirmed.")
-            else:
-                print("Waiting for opponent move...")
-                opponent_move = _wait_for_opponent_move(board, app_name, runtime)
-                print(f"Opponent move: {opponent_move.uci()}")
-                board.push(opponent_move)
-                pgn_node = pgn_node.add_variation(opponent_move)
-                # Allow Chess.app animation to finish before we click again
-                time.sleep(1.2)
+            step_done = False
+            last_step_error: Exception | None = None
+
+            for attempt in range(_GAME_LOOP_RETRIES):
+                if attempt > 0:
+                    wait = 2.0 * attempt
+                    print(f"  [step retry {attempt}/{_GAME_LOOP_RETRIES - 1}] "
+                          f"waiting {wait:.0f}s — last error: {last_step_error}")
+                    time.sleep(wait)
+
+                try:
+                    if board.turn == bot_turn:
+                        move = engine.choose_move(board)
+                        print(f"Bot move: {move.uci()}" +
+                              (f" (retry {attempt})" if attempt else ""))
+                        play_move(calibration, move)
+                        board.push(move)
+                        pgn_node = pgn_node.add_variation(move)
+                        _wait_for_our_move_confirmation(move, app_name, runtime)
+                        print("  Move confirmed.")
+                    else:
+                        print("Waiting for opponent move...")
+                        opponent_move = _wait_for_opponent_move(board, app_name, runtime)
+                        print(f"Opponent move: {opponent_move.uci()}")
+                        board.push(opponent_move)
+                        pgn_node = pgn_node.add_variation(opponent_move)
+                        # Allow Chess.app animation to finish before we click
+                        time.sleep(1.2)
+
+                    step_done = True
+                    break
+
+                except RuntimeError as exc:
+                    last_step_error = exc
+                    # If board state was already updated, don't retry
+                    if board.move_stack and board.peek() == (
+                        move if board.turn != bot_turn else opponent_move  # type: ignore[name-defined]
+                    ):
+                        step_done = True
+                        break
+
+            if not step_done:
+                raise RuntimeError(
+                    f"Step failed after {_GAME_LOOP_RETRIES} attempts: {last_step_error}"
+                )
+
             half_moves += 1
     finally:
         engine.close()
