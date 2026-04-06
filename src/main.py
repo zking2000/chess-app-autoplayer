@@ -10,7 +10,11 @@ import chess
 import chess.pgn
 
 from .actuator import play_move
-from .ax_board import infer_move_from_piece_maps, read_piece_map  # noqa: F401 (used via _wait_for_opponent_move)
+from .ax_board import (  # noqa: F401
+    board_from_live_state,
+    infer_move_from_piece_maps,
+    read_piece_map,
+)
 from .calibrate import calibrate_and_optionally_bootstrap
 from .config import ROOT_DIR, RuntimeConfig, ensure_directories, load_calibration
 from .engine import EngineWrapper
@@ -218,8 +222,17 @@ def command_play(args: argparse.Namespace) -> int:
 
     app_name = calibration.app_name
     bot_color = calibration.bot_color
-    board = chess.Board()
     bot_turn = chess.WHITE if bot_color == "white" else chess.BLACK
+
+    if getattr(args, "resume", False):
+        print("Resuming game — reading current board state from Chess.app...")
+        board = board_from_live_state(app_name)
+        print(f"  Position: {board.fen()}")
+        print(f"  Turn: {'White' if board.turn == chess.WHITE else 'Black'}")
+        print(f"  Castling: {board.castling_xfen()}")
+    else:
+        board = chess.Board()
+
     engine = EngineWrapper(runtime)
     half_moves = 0
 
@@ -229,6 +242,9 @@ def command_play(args: argparse.Namespace) -> int:
     pgn_game.headers["Date"] = datetime.datetime.now().strftime("%Y.%m.%d")
     pgn_game.headers["White"] = "Stockfish" if bot_color == "white" else "Chess.app AI"
     pgn_game.headers["Black"] = "Chess.app AI" if bot_color == "white" else "Stockfish"
+    if getattr(args, "resume", False):
+        pgn_game.headers["SetUp"] = "1"
+        pgn_game.headers["FEN"] = board.fen()
     pgn_node = pgn_game
 
     try:
@@ -336,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "play":
             subparser.add_argument(
                 "--no-save", action="store_true", help="Skip saving PGN and stats"
+            )
+            subparser.add_argument(
+                "--resume", action="store_true",
+                help="Resume a game already in progress: read current position from Chess.app "
+                     "instead of starting from the initial position",
             )
         subparser.set_defaults(func=handler)
 

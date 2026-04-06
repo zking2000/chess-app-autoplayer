@@ -9,6 +9,14 @@ group 1 of the main window. Button descriptions follow these patterns:
 
 This module parses those descriptions to reconstruct the piece map and
 to detect which move was made between two successive states.
+
+Resume support
+--------------
+``board_from_live_state()`` reads the current Chess.app position and
+reconstructs a ``chess.Board`` suitable for resuming a mid-game session.
+Castling rights are inferred from king/rook positions; en passant and
+precise move counters cannot be recovered from a snapshot and are left
+at their defaults (safe conservative values).
 """
 from __future__ import annotations
 
@@ -97,6 +105,130 @@ def read_piece_map(app_name: str = "Chess") -> dict[chess.Square, chess.Piece]:
         except ValueError:
             pass
     return piece_map
+
+
+_TITLE_SCRIPT = """\
+tell application "{app}" to activate
+delay 0.3
+tell application "System Events"
+    tell process "{app}"
+        set frontmost to true
+        set retries to 0
+        repeat
+            set wins to windows
+            if (count of wins) > 0 then exit repeat
+            delay 0.3
+            set retries to retries + 1
+            if retries > 10 then return "unknown"
+        end repeat
+        return title of (item 1 of wins)
+    end tell
+end tell
+"""
+
+
+def read_turn(app_name: str = "Chess") -> chess.Color | None:
+    """Return whose turn it is by reading the Chess.app window title.
+
+    The title contains "(白方走棋)" / "(White to Move)" for white's turn
+    and "(黑方走棋)" / "(Black to Move)" for black's turn.
+    Returns None if the turn cannot be determined (e.g. game over screen).
+    """
+    script = _TITLE_SCRIPT.format(app=app_name)
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    title = result.stdout.strip().lower()
+    if "白方" in title or "white" in title:
+        return chess.WHITE
+    if "黑方" in title or "black" in title:
+        return chess.BLACK
+    return None
+
+
+def _infer_castling(
+    piece_map: dict[chess.Square, chess.Piece],
+) -> str:
+    """Return a castling-rights string (e.g. 'KQkq') inferred from piece positions.
+
+    A side retains its castling right only if both its king and the relevant
+    rook are still on their original squares.  This is conservative: it may
+    grant rights that were already forfeited by an earlier king/rook move, but
+    it never denies rights that are genuinely available.
+    """
+    rights = ""
+    white_king_ok = piece_map.get(chess.E1) == chess.Piece(chess.KING, chess.WHITE)
+    black_king_ok = piece_map.get(chess.E8) == chess.Piece(chess.KING, chess.BLACK)
+
+    if white_king_ok and piece_map.get(chess.H1) == chess.Piece(chess.ROOK, chess.WHITE):
+        rights += "K"
+    if white_king_ok and piece_map.get(chess.A1) == chess.Piece(chess.ROOK, chess.WHITE):
+        rights += "Q"
+    if black_king_ok and piece_map.get(chess.H8) == chess.Piece(chess.ROOK, chess.BLACK):
+        rights += "k"
+    if black_king_ok and piece_map.get(chess.A8) == chess.Piece(chess.ROOK, chess.BLACK):
+        rights += "q"
+    return rights or "-"
+
+
+def board_from_live_state(app_name: str = "Chess") -> chess.Board:
+    """Reconstruct a chess.Board from the current Chess.app position.
+
+    Reads piece positions and whose turn it is directly from the live UI.
+    Castling rights are inferred from king/rook placement; en passant is
+    assumed absent (cannot be determined from a snapshot).
+
+    Raises RuntimeError if the board cannot be read or appears invalid
+    (e.g. missing a king).
+    """
+    piece_map = read_piece_map(app_name)
+    if not piece_map:
+        raise RuntimeError(
+            "Failed to read board from Chess.app — no pieces found. "
+            "Make sure Chess.app is open and a game is in progress."
+        )
+
+    # Validate: both kings must be present
+    white_kings = [sq for sq, p in piece_map.items()
+                   if p == chess.Piece(chess.KING, chess.WHITE)]
+    black_kings = [sq for sq, p in piece_map.items()
+                   if p == chess.Piece(chess.KING, chess.BLACK)]
+    if len(white_kings) != 1 or len(black_kings) != 1:
+        raise RuntimeError(
+            f"Invalid board: found {len(white_kings)} white king(s) and "
+            f"{len(black_kings)} black king(s)."
+        )
+
+    turn = read_turn(app_name)
+    if turn is None:
+        # Fallback: count material difference to guess whose turn it is.
+        # White moves first, so after an even number of half-moves it's white's turn.
+        # Approximate: if piece counts are equal we guess white (start of game bias).
+        turn = chess.WHITE
+        print("Warning: could not determine turn from window title, assuming White.")
+
+    castling = _infer_castling(piece_map)
+
+    # Build FEN: <pieces> <turn> <castling> <en_passant> <halfmove> <fullmove>
+    board = chess.Board(None)  # start with empty board
+    for square, piece in piece_map.items():
+        board.set_piece_at(square, piece)
+    board.turn = turn
+    board.set_castling_fen(castling)
+    board.ep_square = None      # cannot recover en passant from snapshot
+    board.halfmove_clock = 0    # conservative (resets draw-by-50 counter)
+    board.fullmove_number = 1   # approximate; affects nothing functionally
+
+    if not board.is_valid():
+        raise RuntimeError(
+            f"Reconstructed board is not valid (FEN: {board.fen()}). "
+            "The position may be in a transitional animation state — try again."
+        )
+
+    return board
 
 
 def infer_move_from_piece_maps(
