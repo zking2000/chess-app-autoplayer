@@ -44,3 +44,9 @@ assets/templates/manifest.json
 .pytest_cache/
 .coverage
 htmlcov/
+
+# OpenClaw local helpers (do not publish)
+scripts/openclaw-full-tools.batch.json
+scripts/openclaw-exec-approvals-defaults.json
+scripts/apply-openclaw-full-tools.sh
+scripts/OPENCLAW_BATCH_README.md
